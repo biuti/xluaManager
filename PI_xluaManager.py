@@ -21,7 +21,17 @@ except ImportError:
 
 
 # Version
-__VERSION__ = 'v1.0.0'
+__VERSION__ = 'v1.2'
+
+# debug 
+DEBUG = False
+
+def log(msg: str) -> None:
+    xp.log(msg)
+
+def debug(msg: str, tag: str = "DEBUG") -> None:
+    if DEBUG:
+        xp.log(f"[{tag}] {msg}")
 
 # Plugin parameters required from XPPython3
 plugin_name = 'xluaManager'
@@ -47,15 +57,18 @@ class Dref:
         try:
             dref.value = value
         except SystemError as e:
-            xp.log(f"ERROR: {e}")
+            log(f"ERROR: {e}")
 
     def check_values(self) -> None:
-        xp.log(f" - Current xlua/jit_enabled: {self._jit.value}, xlua/logging_enabled: {self._logging.value}")
+        debug(f" - Current xlua/jit_enabled: {self._jit.value}, xlua/logging_enabled: {self._logging.value}", "xLua check")
+        if self._jit.value == 1 and self._logging.value == 0:
+            debug(" - xlua/jit_enabled and xlua/logging_enabled are already set correctly.", "xLua check")
+            return
         if self._jit.value == 0:
             self._jit.value = 1
         if self._logging.value == 1:
             self._logging.value = 0
-        xp.log(f" - xlua/jit_enabled set to {self._jit.value}, xlua/logging_enabled set to {self._logging.value}")
+        log(f" - xlua/jit_enabled set to {self._jit.value}, xlua/logging_enabled set to {self._logging.value}")
 
 
 class PythonInterface:
@@ -77,33 +90,33 @@ class PythonInterface:
     def aircraft_detected(self) -> bool:
         loaded = bool(any(p[1] in self.aircraft_path for p in AIRCRAFTS))
         if not loaded and isinstance(self.dref, Dref):
-            xp.log(f" *** Aircraft not loaded - Dref reset")
+            debug(f" *** Aircraft not loaded - Dref reset", "Acft check")
             self.dref = False
         return loaded
 
-    @property
-    def xlua_dref_exist(self) -> bool:
+    def check_xlua_drefs_values(self) -> None:
+        """Check xLua Drefs values"""
         if not isinstance(self.dref, Dref):
             try:
                 self.dref = Dref()
             except ValueError as e:
-                xp.log(f"xLua Drefs not found, probably standard xLua plugin is installed: {e}")
+                debug(f"xLua Drefs not found, probably standard xLua plugin is installed: {e}", "xLua check")
                 self.dref = False
             except Exception as e:
-                xp.log(f"xLua Dref ERROR: {e}")
+                log(f"xLua Dref ERROR: {e}")
                 self.dref = False
-        return isinstance(self.dref, Dref)
+        if isinstance(self.dref, Dref):
+            self.dref.check_values()
 
     def loopCallback(self, lastCall, elapsedTime, counter, refCon) -> int:
         """Loop Callback"""
         t = datetime.now()
         start = perf_counter()
-        if self.aircraft_detected and self.xlua_dref_exist:
+        if self.aircraft_detected:
             # check if we need to change parameters
-            xp.log(f"{t.strftime('%H:%M:%S')} - aircraft detected: {self.aircraft_path}")
-            self.dref.check_values()
+            self.check_xlua_drefs_values()
 
-        xp.log(f" {t.strftime('%H:%M:%S')} - loopCallback() ended after {round(perf_counter() - start, 3)} sec | schedule = {DEFAULT_SCHEDULE} sec")
+        debug(f" {t.strftime('%H:%M:%S')} - loopCallback() ended after {round(perf_counter() - start, 3)} sec | schedule = {DEFAULT_SCHEDULE} sec", "Loop")
         return DEFAULT_SCHEDULE
 
     def XPluginStart(self) -> tuple[str, str, str]:
@@ -113,7 +126,7 @@ class PythonInterface:
         # loopCallback
         self.loop = self.loopCallback
         self.loop_id = xp.createFlightLoop(self.loop, phase=1)
-        xp.log(f" - {datetime.now().strftime('%H:%M:%S')} Flightloop created, ID {self.loop_id}")
+        log(f" - {datetime.now().strftime('%H:%M:%S')} Flightloop created, ID {self.loop_id}")
         xp.scheduleFlightLoop(self.loop_id, interval=DEFAULT_SCHEDULE)
         return 1
 
@@ -123,4 +136,4 @@ class PythonInterface:
     def XPluginStop(self) -> None:
         # Called once by X-Plane on quit (or when plugins are exiting as part of reload)
         xp.destroyFlightLoop(self.loop_id)
-        xp.log("flightloop closed, exiting ...")
+        log("flightloop closed, exiting ...")
